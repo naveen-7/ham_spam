@@ -1,0 +1,320 @@
+---
+title: "ham/spam"
+author: 'Naveen Sendhilnathan: ns3046'
+date: "10/26/2018"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+readDirectory <- function(dirname){
+# Store the emails in a list
+emails = list();
+# Get a list of filenames in the directory
+filenames = dir(dirname,full.names=TRUE) ;
+for(i in 1 : length(filenames)) {
+emails[[i]] = scan(filenames[i],what="",quiet=TRUE);
+}
+return(emails)
+}
+```
+
+
+```{r}
+#DIR = 'C:/Users/Naveen/Dropbox/ham-v-spam/'
+DIR = "/Users/Naveen/Dropbox (Personal)/ham-v-spam/"
+Ham_train<-readDirectory(paste(DIR,'ham-train',sep=""))
+Ham_test<-readDirectory(paste(DIR,'ham-test',sep=""))
+Spam_train<-readDirectory(paste(DIR,'spam-train',sep=""))
+Spam_test<-readDirectory(paste(DIR,'spam-test',sep=""))
+```
+
+
+```{r}
+sprintf('first element of spam_train is %s' , Spam_train[[1]][1])
+sprintf('first element of ham_train is %s' , Ham_train[[1]][1])
+```
+
+
+```{r}
+makeSortedDictionaryDf <- function(emails){
+# This returns a dataframe that is sorted by the number of 
+# times a word appears
+# List of vectors to one big vector
+dictionaryFull <- unlist(emails)
+# Tabulates the full dictionary
+tabulateDic <- tabulate(factor(dictionaryFull))
+# Find unique values
+dictionary <- unique(dictionaryFull)
+# Sort them alphabetically
+dictionary <- sort(dictionary)
+dictionaryDf <- data.frame(word = dictionary, count = tabulateDic)
+sortDictionaryDf <- dictionaryDf[order(dictionaryDf$count,decreasing=TRUE),];
+return(sortDictionaryDf)
+}
+```
+
+
+```{r}
+all_emails <- c(Ham_train,Spam_train,Ham_test,Spam_test)
+dictionary = makeSortedDictionaryDf(all_emails)
+```
+
+
+```{r}
+makeDocumentTermMatrix <- function(emails, dictionary){
+# This takes the email and dictionary objects from above and # out puts a document term matrix
+num_emails <- length(emails);
+num_words <- length(dictionary$word);
+# Instantiate a matrix where rows are documents and columns are words
+dtm <- mat.or.vec(num_emails,num_words); # A matrix filled with zeros
+for (i in 1 : num_emails){
+num_words_email <- length(emails[[i]]);
+email_temp <- emails[[i]];
+for ( j in 1 :num_words_email){
+ind <- which(dictionary$word == email_temp[j]);
+dtm[i,ind] <- dtm[i,ind] + 1;
+}
+}
+return (dtm) ;
+}
+```
+
+
+```{r}
+dtm_ham_train <- makeDocumentTermMatrix(Ham_train, dictionary)
+dtm_ham_test <- makeDocumentTermMatrix(Ham_test, dictionary)
+dtm_spam_train <- makeDocumentTermMatrix(Spam_train, dictionary)
+dtm_spam_test <- makeDocumentTermMatrix(Spam_test, dictionary)
+```
+
+
+
+
+```{r}
+makeLogPvec <- function(dtm, mu){
+# Sum up the number of instances per word
+pvecNoMu <- colSums(dtm)
+# Sum up number of words
+nWords <- sum(pvecNoMu)
+# Get dictionary size
+dicLen <- length(pvecNoMu)
+# Incorporate mu and normalize
+logPvec <- log(pvecNoMu + mu) - log(mu*dicLen + nWords)
+return(logPvec)
+}
+```
+
+
+```{r}
+D = dim(dictionary)[1]
+mu = 1/abs(D)
+log_pvec_ham <- makeLogPvec(dtm_ham_train,mu)
+log_pvec_spam <- makeLogPvec(dtm_spam_train,mu)
+```
+
+
+```{r}
+predictNaiveBayes <- function(log_pvec_ham, log_pvec_spam, log_ham_prior , log_spam_prior , dtm_test) {
+num_email = dim(dtm_test)[1]
+num_words = dim(dtm_test)[2]
+result <- mat.or.vec(num_email,1);
+  # compute the probability that each word in the test is from spam, from ham
+  for (i in 1:num_email){
+    X1 = log_spam_prior+sum(log_pvec_spam*dtm_test[i,])
+    X2 = log_ham_prior+sum(log_pvec_ham*dtm_test[i,])
+    if (!is.na(X1) && !is.na(X2)){
+    if (X1>=X2){
+      result[i]=1  #SPAM
+    } else {
+      result[i]=0 #HAM
+    }
+    }
+  }
+return(result)
+}
+```
+
+
+```{r}
+log_ham_prior = log(0.5)
+log_spam_prior = log(0.5)
+HAM_predicted = predictNaiveBayes(log_pvec_ham, log_pvec_spam, log_ham_prior , log_spam_prior , dtm_ham_test)
+SPAM_predicted = predictNaiveBayes(log_pvec_ham, log_pvec_spam, log_ham_prior , log_spam_prior , dtm_spam_test)
+
+accuracy = (length(which(HAM_predicted==0))+length(which(SPAM_predicted==1)))/(length(HAM_predicted)+length(SPAM_predicted))
+sensitivity = length(which(SPAM_predicted==1))/length(SPAM_predicted)
+specificity = length(which(HAM_predicted==0))/length(HAM_predicted)
+sprintf('accuracy = %f',accuracy)
+sprintf('sensivity = %f',sensitivity)
+sprintf('1 - specificity = %f',1-specificity)
+```
+
+
+```{r}
+fiveFoldCV <- function(dtm_ham_train, dtm_spam_train, log_ham_prior , log_spam_prior , mu) {
+# your code here
+# split up your data into 5 sets
+n <- nrow(dtm_ham_train)
+fold_size <- n/5
+errorrate_CV = mat.or.vec(5,1)
+full_range <- 1:n
+
+for(i in 1:5) {
+    validation_range <- ((i-1) * fold_size+1) : (i*fold_size)
+    train_range <- setdiff(full_range,validation_range)
+
+    # train on the train range using makeLogPvec ()
+    dtm_ham_train_CV = dtm_ham_train[train_range,]
+    dtm_spam_train_CV = dtm_spam_train[train_range,]
+    log_pvec_ham_CV <- makeLogPvec(dtm_ham_train_CV,mu)
+    log_pvec_spam_CV <- makeLogPvec(dtm_spam_train_CV,mu)
+
+
+    # validate on the validation range using predictNaiveBayes()
+    dtm_ham_test_CV = dtm_ham_train[validation_range,]
+    dtm_spam_test_CV = dtm_spam_train[validation_range,]
+    HAM_predicted_CV <- predictNaiveBayes(log_pvec_ham_CV, log_pvec_spam_CV, log_ham_prior , log_spam_prior , dtm_ham_test_CV)
+    SPAM_predicted_CV <- predictNaiveBayes(log_pvec_ham_CV, log_pvec_spam_CV, log_ham_prior , log_spam_prior , dtm_spam_test_CV)
+
+    # calculate the error rate and store in vector 
+    accuracy_CV = (length(which(HAM_predicted_CV==0))+length(which(SPAM_predicted_CV==1)))/(length(HAM_predicted_CV)+length(SPAM_predicted_CV))
+    sensitivity_CV = length(which(SPAM_predicted_CV==1))/length(SPAM_predicted_CV)
+    specificity_CV = length(which(HAM_predicted_CV==0))/length(HAM_predicted_CV)
+    errorrate_CV[i] = 1-accuracy_CV
+}
+# return the average error over all folds
+return(mean(errorrate_CV))
+}
+```
+
+
+```{r}
+log_ham_prior = log(0.5)
+log_spam_prior = log(0.5)
+mu = (1/abs(D))*c(1/100,1/10,1,10,100)
+ErrorRate = mat.or.vec(5,1)
+for (i in 1:5){
+ErrorRate[i] = fiveFoldCV(dtm_ham_train, dtm_spam_train, log_ham_prior , log_spam_prior , mu[i])
+}
+MU_CV = mu[which(ErrorRate==min(ErrorRate))]
+plot(1:5,ErrorRate,type = "b", main = sprintf('the best mu is %0.5f ',MU_CV),xlab='')
+```
+
+
+```{r}
+log_pvec_ham_NEW <- makeLogPvec(dtm_ham_train,MU_CV)
+log_pvec_spam_NEW <- makeLogPvec(dtm_spam_train,MU_CV)
+
+log_ham_prior = log(0.5)
+log_spam_prior = log(0.5)
+HAM_predicted_NEW = predictNaiveBayes(log_pvec_ham_NEW, log_pvec_spam_NEW, log_ham_prior , log_spam_prior , dtm_ham_test)
+SPAM_predicted_NEW = predictNaiveBayes(log_pvec_ham_NEW, log_pvec_spam_NEW, log_ham_prior , log_spam_prior , dtm_spam_test)
+
+accuracy_NEW = (length(which(HAM_predicted_NEW==0))+length(which(SPAM_predicted_NEW==1)))/(length(HAM_predicted_NEW)+length(SPAM_predicted_NEW))
+sensitivity_NEW = length(which(SPAM_predicted_NEW==1))/length(SPAM_predicted_NEW)
+specificity_NEW = length(which(HAM_predicted_NEW==0))/length(HAM_predicted_NEW)
+sprintf('accuracy_NEW = %f',accuracy_NEW)
+sprintf('sensivity_NEW = %f',sensitivity_NEW)
+sprintf('1 - specificity_NEW = %f',1-specificity_NEW)
+```
+
+
+```{r}
+
+FOLDDIFF <- function(old,new){
+  return(((new-old)/old)*100)
+}
+accuracy_FD = FOLDDIFF(accuracy,accuracy_NEW)
+sensitivity_FD = FOLDDIFF(sensitivity,sensitivity_NEW)
+falsealarm_FD = FOLDDIFF(1-specificity,1-specificity_NEW)
+
+sprintf('difference in accuracy = %f',accuracy_FD)
+sprintf('difference insensivity = %f',sensitivity_FD)
+sprintf('difference in false alarm rate = %f',falsealarm_FD)
+```
+Therefore, we use the mu obtained through 5 fold CV.
+
+
+
+```{r}
+calculateMI <- function(dtm_ham_train, dtm_spam_train) {
+# calculates vector of mutual information for each word .
+ham_sums <- colSums(dtm_ham_train)
+ham_probs <- ham_sums / sum(ham_sums) # vector of
+#probabilities for each word in ham
+spam_sums <- colSums(dtm_spam_train)
+spam_probs <- spam_sums/sum(spam_sums) # vector of probabilities for each word in spam
+all_sums <- ham_sums + spam_sums
+all_probs <- all_sums/sum(all_sums) # vector of probabilites for word in entire set
+mi <- c(1:length(all_probs))
+for(i in 1 : length(all_probs)) {
+if(all_probs[i]==0) {
+mi[i] <- 0 
+}
+else {
+mi[i] <- .5 * ham_probs[i] * log(ham_probs[i]/all_probs[i]) +          .5 * (1-ham_probs[i]) * log((1-ham_probs[i])/(1-all_probs[i])) + 
+         .5 * spam_probs[i] * log(spam_probs[i] / all_probs[i]) +
+         .5 * (1-spam_probs[i]) * log((1-spam_probs[i])/(1-all_probs[i]))
+}
+}
+return(mi)
+}
+```
+
+
+```{r}
+MI = calculateMI(dtm_ham_train, dtm_spam_train)
+```
+
+
+```{r}
+n = c(200,500,1000,2500,10000)
+#n = c(200,500,1000,2500)
+MI_SORT = sort(MI,decreasing = TRUE, index.return=TRUE)
+
+accuracy_MI = mat.or.vec(length(n),1)
+sensitivity_MI= mat.or.vec(length(n),1)
+specificity_MI = mat.or.vec(length(n),1)
+
+log_ham_prior = log(0.5)
+log_spam_prior = log(0.5)
+
+for(i in 1:length(n)){
+mu = 1/n[i]
+
+dtm_ham_train_MI = dtm_ham_train[,MI_SORT$ix[1:n[i]]]
+dtm_spam_train_MI = dtm_spam_train[,MI_SORT$ix[1:n[i]]]
+dtm_ham_test_MI = dtm_ham_test[,MI_SORT$ix[1:n[i]]]
+dtm_spam_test_MI = dtm_spam_test[,MI_SORT$ix[1:n[i]]]
+    
+log_pvec_ham_MI <- makeLogPvec(dtm_ham_train_MI,mu)
+log_pvec_spam_MI <- makeLogPvec(dtm_spam_train_MI,mu)
+
+HAM_predicted_MI = predictNaiveBayes(log_pvec_ham_MI, log_pvec_spam_MI, log_ham_prior , log_spam_prior , dtm_ham_test_MI)
+SPAM_predicted_MI = predictNaiveBayes(log_pvec_ham_MI, log_pvec_spam_MI, log_ham_prior , log_spam_prior , dtm_spam_test_MI)
+
+accuracy_MI[i] = (length(which(HAM_predicted_MI==0))+length(which(SPAM_predicted_MI==1)))/(length(HAM_predicted_MI)+length(SPAM_predicted_MI))
+sensitivity_MI[i] = length(which(SPAM_predicted_MI==1))/length(SPAM_predicted_MI)
+specificity_MI[i] = length(which(HAM_predicted_MI==0))/length(HAM_predicted_MI)
+}
+
+par(mfrow=c(2,2))
+plot(1:length(n),accuracy_MI,type = "b", main = 'accuracy', xlab= '')
+plot(1:length(n),sensitivity_MI,type = "b", main = 'sensitivity', xlab= '')
+plot(1:length(n),1-specificity_MI,type = "b", main = '1-specificity', xlab= '')
+plot(1-specificity_MI,sensitivity_MI,type = "b", main = 'ROC', xlim = c(0,1), ylim = c(0,1), xlab= '1-specificity', ylab='sensitivity')
+lines(c(0,1),c(0,1),type="l")
+```
+
+
+
+The accuracy and sensitivity increases and the false alarm rate decreases until n= 7500, after which they do the opposite. So I would take n = 7500.
+
+
