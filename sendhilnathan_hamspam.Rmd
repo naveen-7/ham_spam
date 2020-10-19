@@ -25,7 +25,6 @@ return(emails)
 }
 ```
 
-
 ```{r}
 #DIR = 'C:/Users/Naveen/Dropbox/ham-v-spam/'
 DIR = "/Users/Naveen/Dropbox (Personal)/ham-v-spam/"
@@ -34,7 +33,6 @@ Ham_test<-readDirectory(paste(DIR,'ham-test',sep=""))
 Spam_train<-readDirectory(paste(DIR,'spam-train',sep=""))
 Spam_test<-readDirectory(paste(DIR,'spam-test',sep=""))
 ```
-
 
 ```{r}
 sprintf('first element of spam_train is %s' , Spam_train[[1]][1])
@@ -59,7 +57,6 @@ sortDictionaryDf <- dictionaryDf[order(dictionaryDf$count,decreasing=TRUE),];
 return(sortDictionaryDf)
 }
 ```
-
 
 ```{r}
 all_emails <- c(Ham_train,Spam_train,Ham_test,Spam_test)
